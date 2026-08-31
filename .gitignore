@@ -24,10 +24,10 @@ xray-server.json
 .clineignore
 update.sh.bak
 dts/
-wrt_core/compilecfg/*_nwrt.ini
-wrt_core/deconfig/*_nwrt.config
-wrt_core/compilecfg/test.ini
-wrt_core/deconfig/test.config
+core/compilecfg/*_nwrt.ini
+core/deconfig/*_nwrt.config
+core/compilecfg/test.ini
+core/deconfig/test.config
 .env
 .taskmaster/
 .sisyphus/

@@ -1,0 +1,378 @@
+name: Auto Build
+run-name: Auto-Build ${{ github.event_name }} ${{ github.ref_name }}
+
+on:
+  schedule:
+    - cron: "30 3 * * *"
+      timezone: "Asia/Hong_Kong"
+
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "强制重新构建"
+        type: boolean
+        default: false
+      publish:
+        description: "发布 Release"
+        type: boolean
+        default: true
+
+
+  push:
+    paths:
+      - "core/compilecfg/**"
+      - "core/deconfig/**"
+      - "!core/deconfig/fragments/**"
+      - "build.sh"
+
+concurrency:
+  group: auto-build
+  cancel-in-progress: false
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  check:
+    name: Check Updates
+    runs-on: ubuntu-24.04
+
+    outputs:
+      matrix: ${{ steps.norm.outputs.matrix }}
+      has_updates: ${{ steps.norm.outputs.has_updates }}
+      tag: ${{ steps.meta.outputs.tag }}
+      date: ${{ steps.meta.outputs.date }}
+      publish: ${{ steps.meta.outputs.publish }}
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Release identity
+        id: meta
+        env:
+          INPUT_PUBLISH: ${{ github.event.inputs.publish }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          DATE="$(TZ=Asia/Shanghai date '+%Y.%m.%d')"
+          BASE_TAG="v${DATE}"
+          TAG="${BASE_TAG}"
+          INDEX=1
+
+          while gh release view "${TAG}" >/dev/null 2>&1; do
+            TAG="${BASE_TAG}.${INDEX}"
+            INDEX=$((INDEX + 1))
+          done
+
+          echo "date=${DATE}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+          PUBLISH=false
+          case "${{ github.event_name }}" in
+            schedule|push)
+             PUBLISH=true ;;
+
+            workflow_dispatch)
+              [ "${INPUT_PUBLISH}" = "true" ] && PUBLISH=true
+              ;;
+          esac
+
+          echo "publish=${PUBLISH}" >> "$GITHUB_OUTPUT"
+          echo "DATE=${DATE} TAG=${TAG} PUBLISH=${PUBLISH}"
+
+      - name: Check Upstream
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ (github.event_name == 'push' || github.event.inputs.force == true) && 'true' || 'false' }}
+        run: |
+          ./core/scripts/check_source_updates.sh
+
+      - name: Normalize outputs
+        id: norm
+        env:
+          MATRIX: ${{ steps.check.outputs.matrix }}
+          HAS: ${{ steps.check.outputs.has_updates }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${MATRIX}" ]; then
+            echo "::error::check_source_updates.sh 没有输出 matrix"
+            exit 1
+          fi
+
+          {
+            echo "matrix<<EOF"
+            echo "${MATRIX}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ -n "${HAS}" ]; then
+            echo "has_updates=${HAS}" >> "$GITHUB_OUTPUT"
+          else
+
+            COUNT="$(jq '[.include[] | select(.model != "_none")] | length' <<<"${MATRIX}")"
+
+            if [ "${COUNT}" -gt 0 ]; then
+              echo "has_updates=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "has_updates=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+  build:
+    name: Build ${{ matrix.model }}
+
+    needs: check
+    if: needs.check.outputs.has_updates == 'true'
+    timeout-minutes: 360
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.check.outputs.matrix) }}
+
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Check Server Performance( 检查服务器 )
+        run: |
+          echo
+          echo "Runner:"
+          echo "${RUNNER_NAME} (${RUNNER_OS}/${RUNNER_ARCH})"
+          uname -a
+          echo "Kernel: $(uname -r)"
+          echo "Uptime: $(uptime -p)"
+
+          echo "===================================================="
+          echo "[CPU]"
+          lscpu | grep -E "Model name|Architecture|CPU\\(s\\)|Thread\\(s\\) per core|Core\\(s\\) per socket|CPU max MHz" || true
+
+          echo "===================================================="
+          echo "[Memory]"
+          free -h
+
+          echo "===================================================="
+          echo "[Disk]"
+          lsblk -o NAME,SIZE,TYPE,MOUNTPOINTS
+          echo
+          df -hT
+
+      - name: Initialization Environment( 初始化环境 )
+        run: |
+          sudo timedatectl set-timezone "Asia/Shanghai"
+          sudo  apt update -y
+          sudo  apt-get -yqq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
+          git gperf haveged help2man intltool jq libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+          libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libfuse-dev libssl-dev libtool lrzsz \
+          genisoimage msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip libpython3-dev qemu-utils \
+          rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev \
+          dos2unix
+          sudo -E apt autoclean
+          sudo -E apt clean
+
+      - name: Fetch Source Code( 拉取源代码 )
+        env:
+          SOURCE_COMMIT: ${{ matrix.commit }}
+        run: ./core/scripts/fetch_source.sh ${{ matrix.model }}
+
+      - name: Cache dl
+        uses: actions/cache@v6.1.0
+        with:
+          path: ./${{ matrix.build_dir }}/dl
+          key: dl-${{ matrix.model }}-${{ matrix.commit }}
+          restore-keys: |
+            dl-shared-
+            dl-${{ matrix.model }}-
+
+      - name: Cache ccache
+        uses: actions/cache@v6.1.0
+        with:
+          path: ./${{ matrix.build_dir }}/.ccache
+          key: ccache-${{ matrix.model }}-${{ matrix.commit }}
+          restore-keys: |
+            ccache-${{ matrix.model }}-
+
+      - name: Build( 构建 )
+        env:
+          DEVICE: ${{ matrix.model }}
+          COMMIT: ${{ matrix.commit }}
+          SHORT_COMMIT: ${{ matrix.short_commit }}
+          BUILD_DIR: ${{ matrix.build_dir }}
+        run: |
+          set -euo pipefail
+
+          ./build.sh "${{ matrix.model }}" "normal"
+
+          # 处理编译后固件
+          mkdir -p release-output
+
+          while IFS= read -r file; do
+            cp -f "$file" "release-output/$(basename "$file")"
+          done < <(
+            find ./output -maxdepth 1 -type f \( \
+              -name '*sysupgrade*' -o \
+              -name '*combined*' -o \
+              -name '*factory*' -o \
+              -name '*squashfs*' -o \
+              -name 'sha256sums' -o \
+              -name '*.buildinfo' \
+            \)
+          )
+
+          if [ -z "$(ls -A release-output 2>/dev/null)" ]; then
+            echo "::error::./output 中没有匹配的固件"
+            ls -lh ./output || true
+            exit 1
+          fi
+
+          jq -cn \
+            --arg model "$DEVICE" \
+            --arg commit "$COMMIT" \
+            --arg short_commit "$SHORT_COMMIT" \
+            --arg build_dir "$BUILD_DIR" \
+            '{model:$model,commit:$commit,short_commit:$short_commit,build_dir:$build_dir}' \
+            > release-output/device.json
+
+          rm -rf \
+            "${BUILD_DIR}/build_dir" \
+            "${BUILD_DIR}/staging_dir" \
+            "${BUILD_DIR}/tmp" || true
+
+          echo "================================"
+          echo "Build Output"
+          echo "================================"
+          ls -lh release-output
+          df -hT
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: ${{ matrix.model }}-${{ matrix.short_commit }}
+          path: ./release-output/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Post-build snapshot
+        if: failure()
+        run: |
+          date '+%F %T %Z'
+          df -hT
+          ls -lh ./output/ 2>/dev/null || true
+
+  release:
+    name: Release
+    needs:
+      - check
+      - build
+    if: |
+      always() &&
+      !cancelled() &&
+      needs.check.outputs.publish == 'true' &&
+      needs.check.outputs.has_updates == 'true' &&
+      (needs.build.result == 'success' || needs.build.result == 'failure')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v8.0.1
+        with:
+          path: ./release
+
+      - name: Prepare Release Files
+        env:
+          TAG: ${{ needs.check.outputs.tag }}
+          DATE: ${{ needs.check.outputs.date }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "::error::${TAG} 已存在，拒绝覆盖。同日补发请手动填写 v${DATE}.x, x = 1、2、3..."
+            exit 1
+          fi
+
+          mkdir -p ./release-files
+
+          while IFS= read -r file; do
+            base="$(basename "$file")"
+
+            dir="$(basename "$(dirname "$file")")"
+
+            model="${dir%-*}"
+            if [[ "$dir" =~ ^(.+)-[0-9a-f]{7}$ ]]; then
+                model="${BASH_REMATCH[1]}"
+            fi
+
+            case "$base" in
+                device.json|sha256sums) continue ;;
+                *.buildinfo) dest="./release-files/${model}-${base}" ;;
+                *) dest="./release-files/${base}" ;;
+            esac
+
+            if [ -e "$dest" ]; then
+                echo "::warning::文件名冲突 ${base}，加设备前缀"
+                dest="./release-files/${model}-${base}"
+            fi
+
+            cp -f "$file" "$dest"
+          done < <(find ./release -mindepth 2 -type f)
+
+          if [ -z "$(ls -A ./release-files 2>/dev/null)" ]; then
+            echo "::error::没有任何固件可发布"
+            exit 1
+          fi
+
+          (cd ./release-files && sha256sum * > sha256sums)
+
+          mapfile -t DEVICE_JSONS < <(find ./release -name device.json)
+          if [ "${#DEVICE_JSONS[@]}" -eq 0 ]; then
+            echo "::error::缺少 device.json"
+            exit 1
+          fi
+
+          jq -s '{
+            tag: env.TAG,
+            timezone: "Asia/Shanghai",
+            devices: map({(.model): {commit, short_commit, build_dir}}) | add
+          }' "${DEVICE_JSONS[@]}" > manifest.json
+          cp -f manifest.json ./release-files/manifest.json
+
+          {
+            echo "## Build ${DATE}"
+            echo
+            echo "时区：Asia/Shanghai"
+            echo
+            echo 登录地址：192.168.0.1
+            echo 登录密码：无
+            echo
+            echo "| 设备 | Commit |"
+            echo "|---|---|"
+            jq -r '.devices | to_entries[] | "| \(.key) | `\(.value.commit)` |"' manifest.json
+            echo
+            echo "校验：\`sha256sums\`"
+          } > description.md
+
+
+          echo "================================"
+          echo "Release ${TAG}"
+          echo "================================"
+          cat description.md
+          ls -lh ./release-files
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v3.0.3
+        with:
+          tag_name: ${{ needs.check.outputs.tag }}
+          name: Build - ${{ needs.check.outputs.date }}
+          body_path: description.md
+          files: release-files/*
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false
+          make_latest: true

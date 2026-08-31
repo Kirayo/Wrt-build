@@ -2,22 +2,34 @@
 
 set -e
 
-# 定位 wrt_core，兼容仓库根目录或上级目录调用。
-if [ -d "wrt_core" ]; then
-    WRT_CORE_PATH="wrt_core"
-elif [ -d "../wrt_core" ]; then
-    WRT_CORE_PATH="../wrt_core"
+# 以脚本自身定位，不依赖调用时的 CWD
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ -f "$SCRIPT_DIR/modules/network.sh" ]]; then
+    CORE_PATH="$SCRIPT_DIR"
+elif [[ -f "$SCRIPT_DIR/core/modules/network.sh" ]]; then
+    CORE_PATH="$(cd "$SCRIPT_DIR/core" && pwd)"
 else
-    echo "Error: wrt_core directory not found!"
+    echo "Error: core not found (from $SCRIPT_DIR)" >&2
     exit 1
 fi
 
-BASE_PATH=$(cd "$WRT_CORE_PATH" && pwd)
 
-REPO_ROOT=$(cd "$BASE_PATH/.." && pwd)
+# 根目录
+ROOT_PATH=$(cd "$CORE_PATH/.." && pwd)
 
-Dev=$1
-Build_Mod=$2
+DEVICE=$1
+MODE=$2
+
+BUILD_DATE=${BUILD_DATE:-$(TZ=Asia/Shanghai date +"%Y-%m-%d")}
+BUILD_TIME=${BUILD_TIME:-$(TZ=Asia/Shanghai date +"%H:%M:%S")}
+
+echo "================================"
+echo "Device      : $DEVICE"
+echo "Date        : $BUILD_DATE"
+echo "Time        : $BUILD_TIME"
+echo "Mode        : $MODE"
+echo "================================"
 
 SUPPORTED_DEVS=()
 
@@ -29,11 +41,11 @@ collect_supported_devs() {
 
     SUPPORTED_DEVS=()
 
-    for ini_file in "$BASE_PATH"/compilecfg/*.ini; do
+    for ini_file in "$CORE_PATH"/compilecfg/*.ini; do
         [[ -f "$ini_file" ]] || continue
 
         dev_key=$(basename "$ini_file" .ini)
-        if [[ -f "$BASE_PATH/deconfig/$dev_key.config" ]]; then
+        if [[ -f "$CORE_PATH/deconfig/$dev_key.config" ]]; then
             SUPPORTED_DEVS+=("$dev_key")
         fi
     done
@@ -46,8 +58,8 @@ collect_supported_devs() {
 }
 
 print_usage() {
-    echo "Usage: $0 <device> [debug|container|container_debug|config_preview]"
-    echo "       ./start.sh"
+    echo "Usage: $0 <device> [normal|debug|config_preview]"
+    echo "       ./build.sh"
 }
 
 print_supported_devs() {
@@ -81,7 +93,7 @@ prompt_select_dev() {
         if [[ "$input" =~ ^[[:space:]]*([0-9]+)[[:space:]]*$ ]]; then
             selected_index=${BASH_REMATCH[1]}
             if ((selected_index >= 1 && selected_index <= ${#SUPPORTED_DEVS[@]})); then
-                Dev=${SUPPORTED_DEVS[selected_index - 1]}
+                DEVICE=${SUPPORTED_DEVS[selected_index - 1]}
                 return
             fi
         fi
@@ -97,9 +109,7 @@ prompt_select_build_mode() {
         echo "Build mode:"
         echo "  1) normal"
         echo "  2) debug"
-        echo "  3) container"
-        echo "  4) container_debug"
-        echo "  5) config_preview"
+        echo "  3) config_preview"
         printf "Select build mode (1-5, q to quit): "
 
         if ! read -r input; then
@@ -114,45 +124,35 @@ prompt_select_build_mode() {
         fi
 
         if [[ "$input" =~ ^[[:space:]]*1[[:space:]]*$ ]]; then
-            Build_Mod=""
+            MODE="normal"
             return
         fi
 
         if [[ "$input" =~ ^[[:space:]]*2[[:space:]]*$ ]]; then
-            Build_Mod="debug"
+            MODE="debug"
             return
         fi
 
         if [[ "$input" =~ ^[[:space:]]*3[[:space:]]*$ ]]; then
-            Build_Mod="container"
+            MODE="config_preview"
             return
         fi
 
-        if [[ "$input" =~ ^[[:space:]]*4[[:space:]]*$ ]]; then
-            Build_Mod="container_debug"
-            return
-        fi
-
-        if [[ "$input" =~ ^[[:space:]]*5[[:space:]]*$ ]]; then
-            Build_Mod="config_preview"
-            return
-        fi
-
-        echo "Invalid selection. Please enter 1, 2, 3, 4, or 5."
+        echo "Invalid selection. Please enter 1, 2, 3"
     done
 }
-
+# 判断是否支持交互终端
 is_interactive_terminal() {
     [[ -t 0 && -t 1 ]]
 }
-
+# 校验模式
 validate_build_mode() {
-    case "$Build_Mod" in
-        ""|debug|container|container_debug|config_preview)
+    case "$MODE" in
+        normal|debug|config_preview)
             return 0
             ;;
         *)
-            echo "Error: unsupported build mode: $Build_Mod" >&2
+            echo "Error: unsupported build mode: $MODE" >&2
             print_usage >&2
             exit 1
             ;;
@@ -175,13 +175,13 @@ if [[ $# -eq 0 ]]; then
 
     prompt_select_dev
 
-    if [[ -z $Build_Mod ]]; then
+    if [[ -z $MODE ]]; then
         prompt_select_build_mode
     fi
 fi
 
-CONFIG_FILE="$BASE_PATH/deconfig/$Dev.config"
-INI_FILE="$BASE_PATH/compilecfg/$Dev.ini"
+CONFIG_FILE="$CORE_PATH/deconfig/$DEVICE.config"
+INI_FILE="$CORE_PATH/compilecfg/$DEVICE.ini"
 
 if [[ ! -f $CONFIG_FILE ]]; then
     echo "Config not found: $CONFIG_FILE"
@@ -200,11 +200,8 @@ read_ini_by_key() {
     awk -F"=" -v key="$key" '$1 == key {print $2}' "$INI_FILE"
 }
 
-CONFIG_FRAGMENT_DIR="$BASE_PATH/deconfig/fragments"
-DEFAULT_CONFIG_FRAGMENTS=()
-ADD_CONFIG_FRAGMENT_LIST=()
-REMOVE_CONFIG_FRAGMENT_LIST=()
-EFFECTIVE_CONFIG_FRAGMENTS=()
+CONFIG_FRAGMENT_DIR="$CORE_PATH/deconfig/fragments"
+CONFIG_FRAGMENTS=()
 
 parse_fragment_csv() {
     local csv=$1
@@ -214,9 +211,11 @@ parse_fragment_csv() {
 
     target_array=()
     csv=${csv//[[:space:]]/}
+
     [[ -n $csv ]] || return 0
 
     IFS=',' read -r -a target_array <<< "$csv"
+
     for item in "${target_array[@]}"; do
         if [[ -z $item ]]; then
             echo "Error: empty config fragment name in '$csv'." >&2
@@ -228,27 +227,6 @@ parse_fragment_csv() {
             exit 1
         fi
     done
-}
-
-fragment_in_list() {
-    local fragment=$1
-    shift
-    local item
-
-    for item in "$@"; do
-        [[ $item == "$fragment" ]] && return 0
-    done
-
-    return 1
-}
-
-append_unique_fragment() {
-    local fragment=$1
-    local output_array=$2
-    local -n target_array="$output_array"
-
-    fragment_in_list "$fragment" "${target_array[@]}" && return 0
-    target_array+=("$fragment")
 }
 
 validate_enable_fragment() {
@@ -265,147 +243,61 @@ join_fragments() {
     local IFS=','
     echo "$*"
 }
-
+# 校验 CONFIG_FRAGMENTS 是否有效
 resolve_config_fragments() {
     local fragment
-    local candidate_fragments=()
 
-    parse_fragment_csv "$(read_ini_by_key "CONFIG_FRAGMENTS")" DEFAULT_CONFIG_FRAGMENTS
-    parse_fragment_csv "${ADD_CONFIG_FRAGMENTS:-}" ADD_CONFIG_FRAGMENT_LIST
-    parse_fragment_csv "${REMOVE_CONFIG_FRAGMENTS:-}" REMOVE_CONFIG_FRAGMENT_LIST
+    parse_fragment_csv "$(read_ini_by_key "CONFIG_FRAGMENTS")" CONFIG_FRAGMENTS
 
-    for fragment in "${DEFAULT_CONFIG_FRAGMENTS[@]}" "${ADD_CONFIG_FRAGMENT_LIST[@]}" "${REMOVE_CONFIG_FRAGMENT_LIST[@]}"; do
+    for fragment in "${CONFIG_FRAGMENTS[@]}"; do
         validate_enable_fragment "$fragment"
     done
 
-    for fragment in "${DEFAULT_CONFIG_FRAGMENTS[@]}" "${ADD_CONFIG_FRAGMENT_LIST[@]}"; do
-        append_unique_fragment "$fragment" candidate_fragments
-    done
-
-    EFFECTIVE_CONFIG_FRAGMENTS=()
-    for fragment in "${candidate_fragments[@]}"; do
-        if ! fragment_in_list "$fragment" "${REMOVE_CONFIG_FRAGMENT_LIST[@]}"; then
-            EFFECTIVE_CONFIG_FRAGMENTS+=("$fragment")
-        fi
-    done
-
-    for fragment in "${REMOVE_CONFIG_FRAGMENT_LIST[@]}"; do
-        if [[ $fragment == "nss" ]]; then
-            echo "Warning: removing platform fragment 'nss' is high risk." >&2
-        fi
-    done
 }
 
 print_config_fragment_summary() {
     echo "Config fragments:"
-    echo "  Device: $Dev"
-    echo "  Default fragments: $(join_fragments "${DEFAULT_CONFIG_FRAGMENTS[@]}")"
-    echo "  Add fragments: $(join_fragments "${ADD_CONFIG_FRAGMENT_LIST[@]}")"
-    echo "  Remove fragments: $(join_fragments "${REMOVE_CONFIG_FRAGMENT_LIST[@]}")"
-    echo "  Effective fragments: $(join_fragments "${EFFECTIVE_CONFIG_FRAGMENTS[@]}")"
+    echo "  Device: $DEVICE"
+    echo "  Enabled fragments: $(join_fragments "${CONFIG_FRAGMENTS[@]}")"
 }
 
 print_config_preview() {
     print_config_fragment_summary
     echo "Config assembly order:"
     echo "  1) $CONFIG_FILE"
-    echo "  2) $BASE_PATH/deconfig/compile_base.config"
+    echo "  2) $CORE_PATH/deconfig/compile_base.config"
 
     local order=3
     local fragment
-    for fragment in "${EFFECTIVE_CONFIG_FRAGMENTS[@]}"; do
+    for fragment in "${CONFIG_FRAGMENTS[@]}"; do
         echo "  $order) $CONFIG_FRAGMENT_DIR/$fragment.config"
         order=$((order + 1))
     done
 
 }
 
-prepare_container_image() {
-    local base_image=$1
-    local image_name=$2
-    local container_tmp_Dockerfile
-    local container_default_user
-
-    container_tmp_Dockerfile=$(mktemp Dockerfile.XXXXXX)
-
-    cleanup_container_dockerfile() {
-        rm -f "$container_tmp_Dockerfile"
-    }
-
-    trap cleanup_container_dockerfile RETURN
-
-    docker pull "$base_image"
-    container_default_user=$(docker run --rm "$base_image" whoami)
-    cat > "$container_tmp_Dockerfile" <<EOF
-FROM $base_image
-USER root
-RUN apt-get update && apt-get install -y sudo git jq build-essential cmake g++ clang bison flex libelf-dev libncurses5-dev python3-distutils zlib1g-dev python3 pkg-config libssl-dev
-USER $container_default_user
-RUN git config --global pull.rebase false
-RUN git config --global advice.detachedHead false
-CMD ["bash", "wrt_core/build_container.sh", "$image_name"]
-EOF
-    docker build -t "$image_name" -f "$container_tmp_Dockerfile" .
-}
-
-run_container_build() {
-    local container_build_mod=$1
-    local build_target_sdk
-    local container_name
-
-    build_target_sdk=$(read_ini_by_key "BUILD_TARGET_SDK")
-
-    if [[ -z "$build_target_sdk" ]]; then
-        echo "BUILD_TARGET_SDK not specified in $INI_FILE. Using default: openwrt-25.12"
-        build_target_sdk="immortalwrt/sdk:openwrt-25.12"
-    fi
-
-    container_name="$(echo "$Dev" | tr '[:upper:]' '[:lower:]' | tr '/:' '-_')-build-container"
-
-    prepare_container_image "$build_target_sdk" "$container_name"
-    docker run --rm -it \
-        -v "$REPO_ROOT":/build \
-        -w /build \
-        -e ADD_CONFIG_FRAGMENTS \
-        -e REMOVE_CONFIG_FRAGMENTS \
-        --shm-size=8g \
-        --ipc=shareable \
-        --ulimit nofile=65535:65535 \
-        "$container_name" \
-        bash wrt_core/build_container.sh "$Dev" "$container_build_mod"
-}
-
 remove_uhttpd_dependency() {
-    local config_path="$BASE_PATH/../$BUILD_DIR/.config"
-    local luci_makefile_path="$BASE_PATH/../$BUILD_DIR/feeds/luci/collections/luci/Makefile"
+    local config_path="$BUILD_PATH/.config"
+    local luci_makefile_path="$BUILD_PATH/feeds/luci/collections/luci/Makefile"
 
-    if grep -q "CONFIG_PACKAGE_luci-app-quickfile=y" "$config_path"; then
-        if [ -f "$luci_makefile_path" ]; then
-            sed -i '/luci-light/d' "$luci_makefile_path"
-            echo "Removed uhttpd (luci-light) dependency as luci-app-quickfile (nginx) is enabled."
-        fi
-    fi
+    [[ -f "$config_path" ]] || return 0
+    grep -q "CONFIG_PACKAGE_luci-app-quickfile=y" "$config_path" || return 0
+    [[ -f "$luci_makefile_path" ]] || return 0
+
+    sed -i '/luci-light/d' "$luci_makefile_path"
+    echo "Removed uhttpd (luci-light) dependency as luci-app-quickfile (nginx) is enabled."
 }
 
-if [[ $Build_Mod == "container" ]]; then
-    run_container_build ""
-    exit 0
-fi
-
-if [[ $Build_Mod == "container_debug" ]]; then
-    run_container_build "debug"
-    exit 0
-fi
-
-apply_config() {
+assemble_config() {
     local fragment
+    local config_path="$BUILD_PATH/.config"
 
-    \cp -f "$CONFIG_FILE" "$BASE_PATH/../$BUILD_DIR/.config"
+    \cp -f "$CONFIG_FILE" "$config_path"
 
-    cat "$BASE_PATH/deconfig/compile_base.config" >> "$BASE_PATH/../$BUILD_DIR/.config"
+    cat "$CORE_PATH/deconfig/compile_base.config" >> "$config_path"
 
-    for fragment in "${EFFECTIVE_CONFIG_FRAGMENTS[@]}"; do
-        cat "$CONFIG_FRAGMENT_DIR/$fragment.config" >> "$BASE_PATH/../$BUILD_DIR/.config"
+    for fragment in "${CONFIG_FRAGMENTS[@]}"; do
+        cat "$CONFIG_FRAGMENT_DIR/$fragment.config" >> "$config_path"
     done
 
 }
@@ -420,50 +312,112 @@ COMMIT_HASH=${COMMIT_HASH:-none}
 
 resolve_config_fragments
 
-if [[ $Build_Mod == "config_preview" ]]; then
+if [[ $MODE == "config_preview" ]]; then
     print_config_preview
     exit 0
 fi
 
-if [[ -d action_build ]]; then
-    # GitHub Actions 使用 action_build 作为固定构建目录。
-    BUILD_DIR="action_build"
+# 下游
+"$CORE_PATH/scripts/update.sh" "$REPO_URL" "$REPO_BRANCH" "$BUILD_DIR" "$COMMIT_HASH"
+
+# 构建目录
+if [[ "$GITHUB_ACTIONS" == "true" && -z "$BUILD_DIR" ]]; then
+    BUILD_DIR="actions-build"
 fi
 
-"$BASE_PATH/update.sh" "$REPO_URL" "$REPO_BRANCH" "$BUILD_DIR" "$COMMIT_HASH"
+if [[ -z "$BUILD_DIR" ]]; then
+    echo "Error: BUILD_DIR is not set" >&2
+    exit 1
+fi
 
-apply_config
+BUILD_PATH="$(realpath "$ROOT_PATH/$BUILD_DIR")"
+
+# 合并处理config
+assemble_config
 print_config_fragment_summary
 remove_uhttpd_dependency
 
-cd "$BASE_PATH/../$BUILD_DIR"
-make defconfig
+cd "$BUILD_PATH"
 
-if grep -qE "^CONFIG_TARGET_x86_64=y" "$CONFIG_FILE"; then
-    DISTFEEDS_PATH="$BASE_PATH/../$BUILD_DIR/package/emortal/default-settings/files/99-distfeeds.conf"
-    if [ -d "${DISTFEEDS_PATH%/*}" ] && [ -f "$DISTFEEDS_PATH" ]; then
+# x86 feed 修正
+if grep -qE "^CONFIG_TARGET_x86_64=y" "$BUILD_PATH/.config"; then
+    DISTFEEDS_PATH="$BUILD_PATH/package/emortal/default-settings/files/99-distfeeds.conf"
+
+    if [[ -f "$DISTFEEDS_PATH" ]]; then
+        echo "Fix x86_64 distfeeds"
         sed -i 's/aarch64_cortex-a53/x86_64/g' "$DISTFEEDS_PATH"
     fi
 fi
 
-if [[ $Build_Mod == "debug" ]]; then
+echo "Running make defconfig"
+make defconfig
+
+if [[ "$MODE" == "debug" ]]; then
+    DEBUG_DIR="$ROOT_PATH/output/debug"
+    mkdir -p "$DEBUG_DIR"
+
+    # Export diffconfig
+    "$BUILD_PATH/scripts/diffconfig.sh" \
+        > "$DEBUG_DIR/${DEVICE}.diffconfig"
+
+    # Export complete config after make defconfig
+    cp "$BUILD_PATH/.config" \
+        "$DEBUG_DIR/${DEVICE}.config"
+
+    echo "========== OUTPUT =========="
+    echo "Diffconfig : $DEBUG_DIR/${DEVICE}.diffconfig"
+    echo "Config     : $DEBUG_DIR/${DEVICE}.config"
+
     exit 0
 fi
 
-TARGET_DIR="$BASE_PATH/../$BUILD_DIR/bin/targets"
-if [[ -d $TARGET_DIR ]]; then
-    find "$TARGET_DIR" -type f \( -name "*.bin" -o -name "*.manifest" -o -name "*efi.img.gz" -o -name "*.itb" -o -name "*.fip" -o -name "*.ubi" -o -name "*rootfs.tar.gz" \) -exec rm -f {} +
+# ==============================
+# Cleanup old images
+# ==============================
+
+TARGET_DIR="$BUILD_PATH/bin/targets"
+
+if [[ -d "$TARGET_DIR" ]]; then
+   rm -rf "$TARGET_DIR"
 fi
 
-make download -j$(($(nproc) * 2))
-make -j$(($(nproc) + 1)) || make -j1 V=s
+# ==============================
+# Build
+# ==============================
+CPU_CORES=$(nproc)
+DOWNLOAD_JOBS=$((CPU_CORES * 2))
+BUILD_JOBS=$((CPU_CORES + 1))
 
-FIRMWARE_DIR="$BASE_PATH/../firmware"
-\rm -rf "$FIRMWARE_DIR"
-mkdir -p "$FIRMWARE_DIR"
-find "$TARGET_DIR" -type f \( -name "*.bin" -o -name "*.manifest" -o -name "*efi.img.gz" -o -name "*.itb" -o -name "*.fip" -o -name "*.ubi" -o -name "*rootfs.tar.gz" \) -exec cp -f {} "$FIRMWARE_DIR/" \;
-\rm -f "$BASE_PATH/../firmware/Packages.manifest" 2>/dev/null
+echo "Download jobs: $DOWNLOAD_JOBS"
+echo "Build jobs   : $BUILD_JOBS"
 
-if [[ -d action_build ]]; then
-    make clean
-fi
+make download -j"$DOWNLOAD_JOBS"
+make -j"$BUILD_JOBS" || make -j1 V=s
+
+# ==============================
+# Build Artifacts
+# ==============================
+echo "================================"
+echo " Build File"
+ls -lh "$TARGET_DIR"
+echo "================================"
+
+OUTPUT_DIR="$ROOT_PATH/output"
+
+rm -rf "$OUTPUT_DIR"
+mkdir -p "$OUTPUT_DIR"
+
+while IFS= read -r file; do
+
+    cp "$file" "$OUTPUT_DIR/"
+
+done < <(
+    find "$TARGET_DIR" -type f \
+    -not -path "*/packages/*"
+)
+
+echo
+echo "================================"
+echo "Output File"
+ls -lh "$OUTPUT_DIR"
+echo "================================"
