@@ -100,7 +100,8 @@ fi
 #   2. 新 notes：| DEVICE | `40位commit` |
 # ==============================
 RELEASES_JSON="[]"
-
+# 获取的最大Release数量
+MAX_RELEASES=60
 if [ "$FORCE" != "true" ]; then
     echo "================================"
     echo " Check Previous Builds"
@@ -108,23 +109,93 @@ if [ "$FORCE" != "true" ]; then
     echo " Releases   : latest 60"
     echo "================================"
 
-    RELEASES_JSON="$(
-        gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=60" \
-            --jq '[.[] | {body: (.body // ""), assets: [.assets[].name]}]'
-    )"
+    # 读取release body
+    # RELEASES_JSON="$(
+    #     gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=${MAX_RELEASES}" \
+    #         --jq '[.[] | {body: (.body // ""), assets: [.assets[].name]}]'
+    # )"
 fi
+
+load_manifest_cache() {
+    local releases_json
+    local asset_id
+    local manifest
+
+    echo "Loading release manifests..."
+
+    releases_json="$(
+        gh api \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=${MAX_RELEASES}" |
+        jq '
+            map(
+                select(
+                    .draft == false and
+                    .prerelease == false
+                )
+            )
+        '
+    )"
+
+    MANIFEST_CACHE='[]'
+
+    while IFS= read -r asset_id; do
+        [ -n "$asset_id" ] || continue
+
+        manifest="$(
+            gh api \
+                -H "Accept: application/octet-stream" \
+                "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+                2>/dev/null
+        )" || {
+            echo "::warning::无法读取 manifest.json (asset: ${asset_id})"
+            continue
+        }
+
+        if jq -e \
+            '.devices and (.devices | type == "object")' \
+            <<< "$manifest" >/dev/null 2>&1; then
+            MANIFEST_CACHE="$(
+                jq -c \
+                    --argjson manifest "$manifest" \
+                    '. + [$manifest]' \
+                    <<< "$MANIFEST_CACHE"
+            )"
+        else
+            echo "::warning::忽略无效 manifest.json (asset: ${asset_id})"
+        fi
+    done < <(
+        jq -r '
+            .[].assets[]
+            | select(
+                .name == "manifest.json"
+                and .state == "uploaded"
+            )
+            | .id
+        ' <<< "$releases_json"
+    )
+
+    echo "Loaded $(jq 'length' <<< "$MANIFEST_CACHE") manifest(s)."
+}
 
 already_built() {
     local device="$1"
     local short_commit="$2"
 
+    # 用release body判断
+    # jq -e \
+    #     --arg device "$device" \
+    #     --arg commit "\`$short_commit\`" \
+    #     'any(.[];
+    #         ((.body // "") | contains("| \($device) |") and contains($commit))
+    #     )' \
+    #     <<< "$RELEASES_JSON" \
+    #     >/dev/null
+
     jq -e \
         --arg device "$device" \
-        --arg commit "\`$short_commit\`" \
-        'any(.[];
-            ((.body // "") | contains("| \($device) |") and contains($commit))
-        )' \
-        <<< "$RELEASES_JSON" \
+        --arg short_commit "$short_commit" \
+        'any(.[]; .devices[$device].short_commit == $short_commit)' \
+        <<< "$MANIFEST_CACHE" \
         >/dev/null
 }
 
@@ -133,6 +204,10 @@ already_built() {
 # ==============================
 MATRIX_ITEMS=()
 RESOLVE_ERRORS=0
+
+if [ "$FORCE" != "true" ]; then
+    load_manifest_cache
+fi
 
 echo
 echo "================================"
