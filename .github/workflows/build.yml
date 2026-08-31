@@ -42,6 +42,7 @@ jobs:
       has_updates: ${{ steps.norm.outputs.has_updates }}
       tag: ${{ steps.meta.outputs.tag }}
       date: ${{ steps.meta.outputs.date }}
+      release_name: ${{steps.meta.outputs.release_name}}
       publish: ${{ steps.meta.outputs.publish }}
 
     steps:
@@ -67,6 +68,9 @@ jobs:
 
           echo "date=${DATE}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+          RELEASE_NAME="${TAG#v}"
+          echo "release_name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
 
           PUBLISH=false
           case "${{ github.event_name }}" in
@@ -220,8 +224,9 @@ jobs:
               -name '*combined*' -o \
               -name '*factory*' -o \
               -name '*squashfs*' -o \
+              -name '*.buildinfo' -o \
               -name 'sha256sums' -o \
-              -name '*.buildinfo' \
+              -name '*.manifest' \
             \)
           )
 
@@ -320,9 +325,9 @@ jobs:
             fi
 
             case "$base" in
-                device.json|sha256sums) continue ;;
-                *.buildinfo) dest="./release-files/${model}-${base}" ;;
-                *) dest="./release-files/${base}" ;;
+                device.json|sha256sums|*.buildinfo)
+                continue
+                ;;
             esac
 
             if [ -e "$dest" ]; then
@@ -393,7 +398,7 @@ jobs:
         uses: softprops/action-gh-release@v3.0.3
         with:
           tag_name: ${{ needs.check.outputs.tag }}
-          name: ${{ needs.check.outputs.date }}
+          name: ${{ needs.check.outputs.release_name}}
           body_path: description.md
           files: release-files/*
           fail_on_unmatched_files: true
