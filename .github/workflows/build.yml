@@ -372,7 +372,7 @@ jobs:
             echo "### 基于各分支最新commit构建"
             echo
             echo "### 固件信息"
-            echo
+            echo "兆能ZN-M2 无wifi 无USB"
             echo "登录地址：192.168.0.1"
             echo "登录密码：无"
             echo
