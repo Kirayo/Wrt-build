@@ -363,8 +363,8 @@ jobs:
           cp -f manifest.json ./release-files/manifest.json
 
           {
-            echo "## Build ${DATE}"
-            echo "### 基于分支最新commit构建"
+            echo "## ${DATE}"
+            echo "### 基于各分支最新commit构建"
             echo
             echo "### 固件信息"
             echo
@@ -393,7 +393,7 @@ jobs:
         uses: softprops/action-gh-release@v3.0.3
         with:
           tag_name: ${{ needs.check.outputs.tag }}
-          name: Build - ${{ needs.check.outputs.date }}
+          name: ${{ needs.check.outputs.date }}
           body_path: description.md
           files: release-files/*
           fail_on_unmatched_files: true
