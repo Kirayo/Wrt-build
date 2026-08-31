@@ -376,12 +376,12 @@ jobs:
             echo "登录地址：192.168.0.1"
             echo "登录密码：无"
             echo
-            echo "| 设备 | 源码来源 | 分支 |"
-            echo "|---|---|---|"
+            echo "| 设备 | 源码来源 | 分支 | Commit |"
+            echo "|---|---|---|---|"
             jq -r '
-              .devices
-              | to_entries[]
-              | "| \(.key) | [\(.value.source)](\(.value.source)) | `\(.value.branch)` |"
+                .devices
+                | to_entries[]
+                | "| \(.key) | [\(.value.source)](\(.value.source)) | `\(.value.branch)` | `\(.value.short_commit)` |"
             ' manifest.json
             echo
             echo '校验：`sha256sums`'

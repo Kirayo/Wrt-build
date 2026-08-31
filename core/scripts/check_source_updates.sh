@@ -116,17 +116,13 @@ fi
 
 already_built() {
     local device="$1"
-    local commit="$2"
-    local short_commit="$3"
+    local short_commit="$2"
 
     jq -e \
         --arg device "$device" \
-        --arg commit "$commit" \
-        --arg prefix "${device}-${short_commit}-" \
-        --arg marker "| ${device} | \`${commit} |" \
+        --arg commit "\`$short_commit\`" \
         'any(.[];
-            any(.assets[]; startswith($prefix))
-            or ((.body // "") | contains($marker))
+            ((.body // "") | contains("| \($device) |") and contains($commit))
         )' \
         <<< "$RELEASES_JSON" \
         >/dev/null
@@ -180,7 +176,7 @@ for ini_file in "${INI_FILES[@]}"; do
     echo "  Commit     : $short_commit"
     echo "  Build dir  : $build_dir"
 
-    if [ "$FORCE" != "true" ] && already_built "$device" "$commit" "$short_commit"; then
+    if [ "$FORCE" != "true" ] && already_built "$device" "$short_commit"; then
         echo "  Status     : already built"
         continue
     fi
