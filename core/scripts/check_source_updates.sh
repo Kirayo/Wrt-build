@@ -191,11 +191,15 @@ for ini_file in "${INI_FILES[@]}"; do
     MATRIX_ITEMS+=(
         "$(jq -cn \
             --arg model "$device" \
+            --arg source "$repo_url" \
+            --arg branch "$repo_branch" \
             --arg commit "$commit" \
             --arg short_commit "$short_commit" \
             --arg build_dir "$build_dir" \
             '{
                 model: $model,
+                source: $source,
+                branch: $branch,
                 commit: $commit,
                 short_commit: $short_commit,
                 build_dir: $build_dir
@@ -213,7 +217,7 @@ fi
 # ==============================
 if [ "${#MATRIX_ITEMS[@]}" -eq 0 ]; then
     # 空 include 会让 GHA 的 fromJSON 直接失败；占位 + has_updates=false
-    MATRIX='{"include":[{"model":"_none","commit":"none","short_commit":"none","build_dir":"none"}]}'
+    MATRIX='{"include":[{"model":"_none","source":"none","branch":"none","commit":"none","short_commit":"none","build_dir":"none"}]}'
     HAS_UPDATES="false"
 else
     MATRIX="$(

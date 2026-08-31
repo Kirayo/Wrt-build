@@ -199,6 +199,8 @@ jobs:
       - name: Build( 构建 )
         env:
           DEVICE: ${{ matrix.model }}
+          SOURCE: ${{ matrix.source }}
+          BRANCH: ${{ matrix.branch }}
           COMMIT: ${{ matrix.commit }}
           SHORT_COMMIT: ${{ matrix.short_commit }}
           BUILD_DIR: ${{ matrix.build_dir }}
@@ -231,11 +233,19 @@ jobs:
 
           jq -cn \
             --arg model "$DEVICE" \
+            --arg source "$SOURCE" \
+            --arg branch "$BRANCH" \
             --arg commit "$COMMIT" \
             --arg short_commit "$SHORT_COMMIT" \
             --arg build_dir "$BUILD_DIR" \
-            '{model:$model,commit:$commit,short_commit:$short_commit,build_dir:$build_dir}' \
-            > release-output/device.json
+            '{
+              model:$model,
+              source: $source,
+              branch: $branch,
+              commit:$commit,
+              short_commit:$short_commit,
+              build_dir:$build_dir
+            }' > release-output/device.json
 
           rm -rf \
             "${BUILD_DIR}/build_dir" \
@@ -339,23 +349,37 @@ jobs:
           jq -s '{
             tag: env.TAG,
             timezone: "Asia/Shanghai",
-            devices: map({(.model): {commit, short_commit, build_dir}}) | add
+            devices: map({
+              (.model): {
+                source,
+                branch,
+                commit,
+                short_commit,
+                build_dir
+              }
+            }) | add
           }' "${DEVICE_JSONS[@]}" > manifest.json
+
           cp -f manifest.json ./release-files/manifest.json
 
           {
             echo "## Build ${DATE}"
+            echo "### 基于分支最新commit构建"
             echo
-            echo "时区：Asia/Shanghai"
+            echo "### 固件信息"
             echo
-            echo 登录地址：192.168.0.1
-            echo 登录密码：无
+            echo "登录地址：192.168.0.1"
+            echo "登录密码：无"
             echo
-            echo "| 设备 | Commit |"
-            echo "|---|---|"
-            jq -r '.devices | to_entries[] | "| \(.key) | `\(.value.commit)` |"' manifest.json
+            echo "| 设备 | 源码来源 | 分支 |"
+            echo "|---|---|---|"
+            jq -r '
+              .devices
+              | to_entries[]
+              | "| \(.key) | [\(.value.source)](\(.value.source)) | `\(.value.branch)` |"
+            ' manifest.json
             echo
-            echo "校验：\`sha256sums\`"
+            echo '校验：`sha256sums`'
           } > description.md
 
 
