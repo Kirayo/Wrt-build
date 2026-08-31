@@ -1,5 +1,5 @@
-name: Auto Build
-run-name: Auto-Build ${{ github.event_name }} ${{ github.ref_name }}
+name: Build
+run-name: Auto Build ${{ github.event_name }} ${{ github.ref_name }}
 
 on:
   schedule:
