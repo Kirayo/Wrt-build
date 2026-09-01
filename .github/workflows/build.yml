@@ -89,7 +89,7 @@ jobs:
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
-          FORCE: ${{ (github.event_name == 'push' || github.event.inputs.force == true) && 'true' || 'false' }}
+          FORCE: ${{ (github.event_name == 'push' || inputs.force)}}
         run: |
           ./core/scripts/check_source_updates.sh
 

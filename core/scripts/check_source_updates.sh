@@ -10,10 +10,17 @@ CORE_PATH=$(cd "$SCRIPT_DIR/.." && pwd)
 ROOT_PATH=$(cd "$CORE_PATH/.." && pwd)
 COMPILECFG_DIR="$CORE_PATH/compilecfg"
 
+# ==============================
+# Environment Variables
+# ==============================
 FORCE="${FORCE:-false}"
+MANIFEST_CACHE='[]'          # 全局初始化
+# 获取的最大Release数量
+MAX_RELEASES=60
+MAX_PARALLEL_DOWNLOADS=8   # 可根据情况调整，建议 4~10
 
 # ==============================
-# Check run environment
+# Check run
 # ==============================
 GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-}"
 
@@ -23,7 +30,7 @@ if [ -z "$GITHUB_REPOSITORY" ]; then
 fi
 
 # ==============================
-# Check dependencies
+# Check Dependencies
 # ==============================
 command -v git >/dev/null 2>&1 || {
     echo "Error: git is required" >&2
@@ -41,13 +48,9 @@ command -v jq >/dev/null 2>&1 || {
 }
 
 # ==============================
-# Read INI
+# Helpers
 # ==============================
-if [ ! -d "$COMPILECFG_DIR" ]; then
-    echo "Error: compilecfg directory not found: $COMPILECFG_DIR" >&2
-    exit 1
-fi
-
+# Read INI file by key
 read_ini_by_key() {
     local ini_file="$1"
     local key="$2"
@@ -59,160 +62,147 @@ read_ini_by_key() {
             value=$0
             sub(/^[^=]*=/, "", value)
             gsub(/^[ \t]+|[ \t]+$/, "", value)
+            sub(/[ \t]*#.*$/, "", value)   # 去掉行尾注释
             print value
             exit
         }
         ' "$ini_file"
 }
 
-# ==============================
-# Get upstream commit
-# ==============================
 get_remote_commit() {
     local repo_url="$1"
     local branch="$2"
 
-    git ls-remote "$repo_url" "refs/heads/$branch" \
+    git ls-remote --heads "$repo_url" "refs/heads/$branch" 2>/dev/null \
         | awk 'NR == 1 { print $1 }'
 }
 
 # ==============================
-# Device configs
+# Manifest cache
 # ==============================
-shopt -s nullglob
-
-INI_FILES=("$COMPILECFG_DIR"/*.ini)
-
-if [ "${#INI_FILES[@]}" -eq 0 ]; then
-    echo "Error: no device configuration found:"
-    echo "$COMPILECFG_DIR" >&2
-    exit 1
-fi
-
-# ==============================
-# Previous releases（一次 API）
-#
-# 用来判断「这台设备的这个 commit 最近是否已经发过」。
-# 不能只看最新一份 Release：那天可能只编了其中一台。
-#
-# 匹配两种痕迹（新旧包都能认）：
-#   1. 旧文件名：DEVICE-SHORTSHA-*
-#   2. 新 notes：| DEVICE | `40位commit` |
-# ==============================
-RELEASES_JSON="[]"
-# 获取的最大Release数量
-MAX_RELEASES=60
-if [ "$FORCE" != "true" ]; then
-    echo "================================"
-    echo " Check Previous Builds"
-    echo " Repository : $GITHUB_REPOSITORY"
-    echo " Releases   : latest 60"
-    echo "================================"
-
-    # 读取release body
-    # RELEASES_JSON="$(
-    #     gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=${MAX_RELEASES}" \
-    #         --jq '[.[] | {body: (.body // ""), assets: [.assets[].name]}]'
-    # )"
-fi
-
 load_manifest_cache() {
+    echo "Loading release manifests (latest ${MAX_RELEASES}, parallel=${MAX_PARALLEL_DOWNLOADS})..."
+
     local releases_json
-    local asset_id
-    local manifest
-
-    echo "Loading release manifests..."
-
     releases_json="$(
-        gh api \
-            "repos/${GITHUB_REPOSITORY}/releases?per_page=${MAX_RELEASES}" |
-        jq '
-            map(
-                select(
-                    .draft == false and
-                    .prerelease == false
-                )
-            )
-        '
+        gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=${MAX_RELEASES}" \
+            --jq 'map(select(.draft == false and .prerelease == false))'
     )"
 
-    MANIFEST_CACHE='[]'
-
-    while IFS= read -r asset_id; do
-        [ -n "$asset_id" ] || continue
-
-        manifest="$(
-            gh api \
-                -H "Accept: application/octet-stream" \
-                "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
-                2>/dev/null
-        )" || {
-            echo "::warning::无法读取 manifest.json (asset: ${asset_id})"
-            continue
-        }
-
-        if jq -e \
-            '.devices and (.devices | type == "object")' \
-            <<< "$manifest" >/dev/null 2>&1; then
-            MANIFEST_CACHE="$(
-                jq -c \
-                    --argjson manifest "$manifest" \
-                    '. + [$manifest]' \
-                    <<< "$MANIFEST_CACHE"
-            )"
-        else
-            echo "::warning::忽略无效 manifest.json (asset: ${asset_id})"
-        fi
-    done < <(
+    local asset_ids
+    asset_ids="$(
         jq -r '
             .[].assets[]
-            | select(
-                .name == "manifest.json"
-                and .state == "uploaded"
-            )
+            | select(.name == "manifest.json" and .state == "uploaded")
             | .id
         ' <<< "$releases_json"
-    )
+    )"
+
+    if [[ -z "$asset_ids" ]]; then
+        echo "Loaded 0 manifest(s)."
+        return 0
+    fi
+
+    local tmpdir
+    tmpdir="$(mktemp -d)"
+    # 函数结束时自动清理
+    trap 'rm -rf "$tmpdir"' RETURN
+
+    # ---------- 并行下载 ----------
+    # 把 asset_id 传给子 shell，下载到 $tmpdir/<id>.json
+    echo "$asset_ids" | xargs -P "$MAX_PARALLEL_DOWNLOADS" -I{} \
+        bash -c '
+            asset_id="$1"
+            outfile="$2/${asset_id}.json"
+            if gh api \
+                -H "Accept: application/octet-stream" \
+                "repos/'"${GITHUB_REPOSITORY}"'/releases/assets/${asset_id}" \
+                > "$outfile" 2>/dev/null; then
+                # 下载成功，文件已存在
+                :
+            else
+                # 下载失败，删除空文件并标记
+                rm -f "$outfile"
+                echo "::warning::无法读取 manifest.json (asset: ${asset_id})" >&2
+            fi
+        ' _ {} "$tmpdir"
+
+    # ---------- 校验并合并 ----------
+    local manifest
+    for f in "$tmpdir"/*.json; do
+        [[ -f "$f" ]] || continue
+
+        manifest="$(<"$f")"
+
+        if jq -e '.devices and (.devices | type == "object")' <<< "$manifest" >/dev/null 2>&1; then
+            MANIFEST_CACHE="$(
+                jq -c --argjson m "$manifest" '. + [$m]' <<< "$MANIFEST_CACHE"
+            )"
+        else
+            local asset_id
+            asset_id="$(basename "$f" .json)"
+            echo "::warning::忽略无效 manifest.json (asset: ${asset_id})"
+        fi
+    done
 
     echo "Loaded $(jq 'length' <<< "$MANIFEST_CACHE") manifest(s)."
 }
 
 already_built() {
     local device="$1"
-    local short_commit="$2"
-
-    # 用release body判断
-    # jq -e \
-    #     --arg device "$device" \
-    #     --arg commit "\`$short_commit\`" \
-    #     'any(.[];
-    #         ((.body // "") | contains("| \($device) |") and contains($commit))
-    #     )' \
-    #     <<< "$RELEASES_JSON" \
-    #     >/dev/null
+    local commit="$2"
 
     jq -e \
         --arg device "$device" \
-        --arg short_commit "$short_commit" \
-        'any(.[]; .devices[$device].short_commit == $short_commit)' \
+        --arg commit "$commit" \
+        'any(.[]; .devices[$device].commit == $commit)' \
         <<< "$MANIFEST_CACHE" \
         >/dev/null
 }
 
 # ==============================
-# Build Matrix
+# Device configs
 # ==============================
-MATRIX_ITEMS=()
-RESOLVE_ERRORS=0
 
-if [ "$FORCE" != "true" ]; then
-    load_manifest_cache
+# Read INI
+if [ ! -d "$COMPILECFG_DIR" ]; then
+    echo "Error: compilecfg directory not found: $COMPILECFG_DIR" >&2
+    exit 1
 fi
 
+shopt -s nullglob
+
+INI_FILES=("$COMPILECFG_DIR"/*.ini)
+
+shopt -u nullglob
+
+if [ "${#INI_FILES[@]}" -eq 0 ]; then
+    echo "Error: no device configuration found in $COMPILECFG_DIR" >&2
+    exit 1
+fi
+
+# 只有非 FORCE 才加载历史记录
+if [ "$FORCE" != "true" ]; then
+    echo "================================"
+    echo " Check Previous Builds"
+    echo " Repository : $GITHUB_REPOSITORY"
+    echo " Releases   : latest $MAX_RELEASES"
+    echo "================================"
+
+    load_manifest_cache
+
+fi
+
+# ==============================
+# Build Matrix
+# ==============================
 echo
 echo "================================"
 echo " Check Upstream Sources"
 echo "================================"
+
+MATRIX_ITEMS=()
+RESOLVE_ERRORS=0
 
 for ini_file in "${INI_FILES[@]}"; do
     device="$(basename "$ini_file" .ini)"
@@ -251,7 +241,7 @@ for ini_file in "${INI_FILES[@]}"; do
     echo "  Commit     : $short_commit"
     echo "  Build dir  : $build_dir"
 
-    if [ "$FORCE" != "true" ] && already_built "$device" "$short_commit"; then
+    if [ "$FORCE" != "true" ] && already_built "$device" "$commit"; then
         echo "  Status     : already built"
         continue
     fi
