@@ -20,26 +20,28 @@ append_feed_if_missing() {
 }
 
 update_feeds() {
-    local FEEDS_PATH
-    FEEDS_PATH=$(get_feeds_path)
-    # 调试
-    echo "FEEDS_PATH : $FEEDS_PATH"
-    sed -i '/^#/d' "$FEEDS_PATH"
-    sed -i '/packages_ext/d' "$FEEDS_PATH"
-    sed -i '/[[:space:]]small8[[:space:]]/d' "$FEEDS_PATH"
-    sed -i '/[[:space:]]custom_feed[[:space:]]/d' "$FEEDS_PATH"
+    # local FEEDS_PATH
+    # FEEDS_PATH=$(get_feeds_path)
+    # # 调试
+    # echo "FEEDS_PATH : $FEEDS_PATH"
+    # sed -i '/^#/d' "$FEEDS_PATH"
+    # sed -i '/packages_ext/d' "$FEEDS_PATH"
+    # sed -i '/[[:space:]]small8[[:space:]]/d' "$FEEDS_PATH"
+    # sed -i '/[[:space:]]custom_feed[[:space:]]/d' "$FEEDS_PATH"
 
-    append_feed_if_missing "$FEEDS_PATH" "openwrt_bandix" "src-git openwrt_bandix https://github.com/timsaya/openwrt-bandix.git;main"
-    append_feed_if_missing "$FEEDS_PATH" "luci_app_bandix" "src-git luci_app_bandix https://github.com/timsaya/luci-app-bandix.git;main"
+    # append_feed_if_missing "$FEEDS_PATH" "openwrt_bandix" "src-git openwrt_bandix https://github.com/timsaya/openwrt-bandix.git;main"
+    # append_feed_if_missing "$FEEDS_PATH" "luci_app_bandix" "src-git luci_app_bandix https://github.com/timsaya/luci-app-bandix.git;main"
 
-    if [ ! -f "$BUILD_PATH/include/bpf.mk" ]; then
-        touch "$BUILD_PATH/include/bpf.mk"
-    fi
+    # if [ ! -f "$BUILD_PATH/include/bpf.mk" ]; then
+    #     touch "$BUILD_PATH/include/bpf.mk"
+    # fi
 
+    echo "Updating feeds..."
     network_retry ./scripts/feeds update -a
 }
 
 install_feeds() {
+    echo "Installing feeds..."
     network_retry ./scripts/feeds update -i
-    ./scripts/feeds install -a -f
+    ./scripts/feeds install -a
 }
