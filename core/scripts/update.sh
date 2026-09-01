@@ -78,11 +78,13 @@ stage_feed_source_cleanup() {
     # 清理会与 custom_feed 替换包冲突的上游 feed 包。
     # remove_unwanted_packages
     # remove_tweaked_packages
+    :
 }
 
 stage_custom_feed_prepare() {
     # custom_feed 以 src-link 加入 feeds，仍属于 install 前阶段。
     # install_custom_feed
+    :
 }
 
 stage_pre_install_source_fixes() {
@@ -154,6 +156,7 @@ stage_post_install_package_fixes() {
     # install_pbr_cmcc
     # fix_pbr_ip_forward
     # apply_hash_fixes
+    :
 }
 
 main() {
