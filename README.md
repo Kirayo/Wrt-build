@@ -42,9 +42,9 @@ cd wrt-build
 
 | 模式 | 命令示例 | 说明 |
 | --- | --- | --- |
-| `normal` | `./build.sh x64_immwrt` | 拉取源码、应用配置、下载依赖并完整编译固件。 |
-| `debug` | `./build.sh x64_immwrt debug` |  获取编译的最终配置 `config`文件  |
-| `config_preview` | `./build.sh x64_immwrt config_preview` | 只预览本项目设置的配置 |
+| `normal` | `./build.sh zn-m2_libwrt` | 拉取源码、应用配置、下载依赖并完整编译固件。 |
+| `debug` | `./build.sh xzn-m2_libwrt debug` |  获取编译的最终配置 `config`文件  |
+| `config_preview` | `./build.sh zn-m2_libwrt config_preview` | 只预览本项目设置的配置 |
 
 GitHub Actions 的手动构建提供模式选择
 
@@ -56,7 +56,6 @@ GitHub Actions 的手动构建提供模式选择
 | --- | --- | --- |
 | 兆能 | M2 | `zn-m2_immwrt` |
 | 兆能 | M2 - LiBwrt | `zn-m2_libwrt` |
-| x86 | X64 | `x64_immwrt` |
 
 示例：
 
