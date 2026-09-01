@@ -42,7 +42,7 @@ cd wrt-build
 
 | 模式 | 命令示例 | 说明 |
 | --- | --- | --- |
-| `normal` | `./build.sh zn-m2_libwrt` | 拉取源码、应用配置、下载依赖并完整编译固件。 |
+| `normal` | `./build.sh zn-m2_libwrt normal` | 拉取源码、应用配置、下载依赖并完整编译固件。 |
 | `debug` | `./build.sh xzn-m2_libwrt debug` |  获取编译的最终配置 `config`文件  |
 | `config_preview` | `./build.sh zn-m2_libwrt config_preview` | 只预览本项目设置的配置 |
 
