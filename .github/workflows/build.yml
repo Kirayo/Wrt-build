@@ -3,8 +3,7 @@ run-name: Auto Build ${{ github.event_name }} ${{ github.ref_name }}
 
 on:
   schedule:
-    - cron: "30 3 * * *"
-      timezone: "Asia/Hong_Kong"
+    - cron: "30 19 * * *"
 
   workflow_dispatch:
     inputs:
