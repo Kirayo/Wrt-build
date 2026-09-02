@@ -314,6 +314,10 @@ jobs:
 
           mkdir -p ./release-files
 
+          echo "========== Artifact Files =========="
+          find ./release -type f -print
+          echo "===================================="
+
           while IFS= read -r file; do
             base="$(basename "$file")"
 
@@ -337,7 +341,7 @@ jobs:
             fi
 
             cp -f "$file" "$dest"
-          done < <(find ./release -mindepth 2 -type f)
+          done < <(find ./release -type f -print0)
 
           if [ -z "$(ls -A ./release-files 2>/dev/null)" ]; then
             echo "::error::没有任何固件可发布"
