@@ -374,12 +374,12 @@ jobs:
           {
             echo "## ${DATE}"
             echo
-            echo "## 兆能 `ZN-M2` 无`Wifi` 无`USB`"
+            echo '## 兆能 `ZN-M2` 无`Wifi` 无`USB`'
             echo
-            echo "### 固件信息"
+            echo '### 固件信息'
             echo
-            echo "管理地址：`192.168.0.1`"
-            echo "密码：`无`"
+            echo '管理地址：`192.168.0.1`'
+            echo '密码：`无`'
             echo
             echo '校验：`sha256sums`'
             echo
