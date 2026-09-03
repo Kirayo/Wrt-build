@@ -317,7 +317,7 @@ jobs:
           find ./release -type f -print
           echo "===================================="
 
-          while IFS= read -r file; do
+          while IFS= read -r -d '' file; do
             base="$(basename "$file")"
 
             dir="$(basename "$(dirname "$file")")"
