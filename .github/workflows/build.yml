@@ -372,9 +372,7 @@ jobs:
           cp -f manifest.json ./release-files/manifest.json
 
           {
-            echo "## ${DATE}"
-            echo
-            echo '## 兆能 `ZN-M2` 无`Wifi` 无`USB`'
+            echo '# 兆能 `ZN-M2` 无`Wifi` 无`USB`'
             echo
             echo '### 固件信息'
             echo
