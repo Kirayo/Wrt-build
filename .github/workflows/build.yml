@@ -182,22 +182,22 @@ jobs:
           SOURCE_COMMIT: ${{ matrix.commit }}
         run: ./core/scripts/fetch_source.sh ${{ matrix.model }}
 
-      - name: Cache dl
-        uses: actions/cache@v6.1.0
-        with:
-          path: ./${{ matrix.build_dir }}/dl
-          key: dl-${{ matrix.model }}-${{ matrix.commit }}
-          restore-keys: |
-            dl-${{ matrix.model }}-
-            dl-shared-
+      # - name: Cache dl
+      #   uses: actions/cache@v6.1.0
+      #   with:
+      #     path: ./${{ matrix.build_dir }}/dl
+      #     key: dl-${{ matrix.model }}-${{ matrix.commit }}
+      #     restore-keys: |
+      #       dl-${{ matrix.model }}-
+      #       dl-shared-
 
-      - name: Cache ccache
-        uses: actions/cache@v6.1.0
-        with:
-          path: ./${{ matrix.build_dir }}/.ccache
-          key: ccache-${{ matrix.model }}-${{ matrix.commit }}
-          restore-keys: |
-            ccache-${{ matrix.model }}-
+      # - name: Cache ccache
+      #   uses: actions/cache@v6.1.0
+      #   with:
+      #     path: ./${{ matrix.build_dir }}/.ccache
+      #     key: ccache-${{ matrix.model }}-${{ matrix.commit }}
+      #     restore-keys: |
+      #       ccache-${{ matrix.model }}-
 
       - name: Build( 构建 )
         env:
