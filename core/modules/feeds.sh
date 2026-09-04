@@ -36,12 +36,21 @@ update_feeds() {
     #     touch "$BUILD_PATH/include/bpf.mk"
     # fi
 
-    echo "Updating feeds..."
-    network_retry ./scripts/feeds update -a
+    echo "正在更新 feeds 配置与索引..."
+
+    # 确保切换到正确的源码根目录
+    cd "${BUILD_PATH:-.}" || return 1
+
+    # 使用 -f -a 强制更新所有源，防止 git 冲突导致 CI 中断
+    ./scripts/feeds update -f -a
 }
 
 install_feeds() {
-    echo "Installing feeds..."
-    network_retry ./scripts/feeds update -i
-    ./scripts/feeds install -a
+    echo "正在安装所有 feeds 软件包..."
+
+    # 确保在源码根目录下执行
+    cd "${BUILD_PATH:-.}" || return 1
+
+    # 配合 -f 强制重新建立符号链接，覆盖旧的同名包
+    ./scripts/feeds install -f -a
 }

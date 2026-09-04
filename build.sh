@@ -288,18 +288,58 @@ remove_uhttpd_dependency() {
     echo "Removed uhttpd (luci-light) dependency as luci-app-quickfile (nginx) is enabled."
 }
 
+#  精细化修改 99-default-settings-chinese 的预处理函数
+apply_repo_modifications() {
+    local target_script="$BUILD_PATH/package/emortal/default-settings/files/99-default-settings-chinese"
+
+    if [ -f "$target_script" ]; then
+        echo "正在注入 99-default-settings-chinese 源删改逻辑..."
+
+        # 在 exit 0 前注入删改命令：
+        # - 删除 nss_packages 和 sqm_scripts_nss
+        # - 匹配包含 /video 的行，不依赖原域名，直接将协议+主机名部分替换为上海交大镜像源
+        sed -i "/exit 0/i\\
+# --- 自定义 APK/OPKG 软件源删改逻辑 ---\\
+if [ -f /etc/apk/repositories ]; then\\
+    sed -i '/nss_packages/d' /etc/apk/repositories\\
+    sed -i '/sqm_scripts_nss/d' /etc/apk/repositories\\
+    sed -i '/\/video/s|https://[^/]*/|https://mirror.sjtu.edu.cn/|g' /etc/apk/repositories\\
+fi\\
+\\
+if [ -f /etc/opkg/distfeeds.conf ]; then\\
+    sed -i '/nss_packages/d' /etc/opkg/distfeeds.conf\\
+    sed -i '/sqm_scripts_nss/d' /etc/opkg/distfeeds.conf\\
+    sed -i '/\/video/s|https://[^/]*/|https://mirror.sjtu.edu.cn/|g' /etc/opkg/distfeeds.conf\\
+fi\\
+" "$target_script"
+    else
+        echo "警告: 未找到 $target_script，跳过源修改。"
+    fi
+}
+
 assemble_config() {
     local fragment
     local config_path="$BUILD_PATH/.config"
 
-    \cp -f "$CONFIG_FILE" "$config_path"
+    # 1. 先清空（或重新创建）目标 .config 文件
+    > "$config_path"
 
-    cat "$CORE_PATH/deconfig/compile_base.config" >> "$config_path"
+    # 2. 先写入公共基础配置 compile_base.config
+    if [ -f "$CORE_PATH/deconfig/compile_base.config" ]; then
+        cat "$CORE_PATH/deconfig/compile_base.config" >> "$config_path"
+    fi
 
+    # 3. 接着追加各种功能片段配置 (CONFIG_FRAGMENTS)
     for fragment in "${CONFIG_FRAGMENTS[@]}"; do
-        cat "$CONFIG_FRAGMENT_DIR/$fragment.config" >> "$config_path"
+        if [ -f "$CONFIG_FRAGMENT_DIR/$fragment.config" ]; then
+            cat "$CONFIG_FRAGMENT_DIR/$fragment.config" >> "$config_path"
+        fi
     done
 
+    # 4. 最后追加主配置文件 CONFIG_FILE（确保它的优先级最高，覆盖前面的重复项）
+    if [ -f "$CONFIG_FILE" ]; then
+        cat "$CONFIG_FILE" >> "$config_path"
+    fi
 }
 
 # 读取设备元信息，确定上游源码和构建目录。
@@ -333,6 +373,7 @@ fi
 BUILD_PATH="$(realpath "$ROOT_PATH/$BUILD_DIR")"
 
 # 合并处理config
+apply_repo_modifications
 assemble_config
 print_config_fragment_summary
 remove_uhttpd_dependency
