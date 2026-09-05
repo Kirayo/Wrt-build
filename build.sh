@@ -342,18 +342,21 @@ assemble_config() {
     # 2. 先写入公共基础配置 compile_base.config
     if [ -f "$CORE_PATH/deconfig/compile_base.config" ]; then
         cat "$CORE_PATH/deconfig/compile_base.config" >> "$config_path"
+        echo "" >> "$config_path"  # 追加换行，防止与后续片段黏连
     fi
 
     # 3. 接着追加各种功能片段配置 (CONFIG_FRAGMENTS)
     for fragment in "${CONFIG_FRAGMENTS[@]}"; do
         if [ -f "$CONFIG_FRAGMENT_DIR/$fragment.config" ]; then
             cat "$CONFIG_FRAGMENT_DIR/$fragment.config" >> "$config_path"
+            echo "" >> "$config_path"  # 每个片段追加完后强制换行
         fi
     done
 
     # 4. 最后追加主配置文件 CONFIG_FILE（确保它的优先级最高，覆盖前面的重复项）
     if [ -f "$CONFIG_FILE" ]; then
         cat "$CONFIG_FILE" >> "$config_path"
+        echo "" >> "$config_path"  # 确保文件结尾有换行
     fi
 
     # ==================== 新增：打印合并结果 ====================
