@@ -8,10 +8,10 @@ on:
         required: true
         description: Device Model
         type: choice
-        default: zn_m2_immwrt
+        default: zn-m2_immwrt
         options:
-          - zn_m2_immwrt
-          - zn_m2_libwrt
+          - zn-m2_immwrt
+          - zn-m2_libwrt
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
