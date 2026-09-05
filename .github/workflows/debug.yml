@@ -1,0 +1,50 @@
+name: GET Config
+run-name: GET Config - ${{ inputs.model }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        required: true
+        description: Device Model
+        type: choice
+        default: zn_m2_immwrt
+        options:
+          - zn_m2_immwrt
+          - zn_m2_libwrt
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-lastest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.0
+
+      - name: Build System Setup
+        run: |
+          sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+          sudo -E apt -yqq install dos2unix
+          sudo -E apt -yqq install libfuse-dev
+          sudo -E apt -yqq autoremove --purge
+          sudo -E apt -yqq autoclean
+          sudo -E apt -yqq clean
+          sudo -E systemctl daemon-reload
+
+      - name: Fetch Source Code( 拉取源代码 )
+        run: ./core/scripts/fetch_source.sh ${{ inputs.model }}
+
+      - name: Get Firmware Config
+        run: ./build.sh ${{ inputs.model }} "debug"
+
+      - name: Upload
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: ${{ inputs.model }}
+          path: ./output/*.*
