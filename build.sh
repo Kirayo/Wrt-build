@@ -288,30 +288,45 @@ remove_uhttpd_dependency() {
     echo "Removed uhttpd (luci-light) dependency as luci-app-quickfile (nginx) is enabled."
 }
 
-#  精细化修改 99-default-settings-chinese 的预处理函数
 apply_repo_modifications() {
     local target_script="$BUILD_PATH/package/emortal/default-settings/files/99-default-settings-chinese"
 
     if [ -f "$target_script" ]; then
         echo "正在注入 99-default-settings-chinese 源删改逻辑..."
 
-        # 在 exit 0 前注入删改命令：
-        # - 删除 nss_packages 和 sqm_scripts_nss
-        # - 匹配包含 /video 的行，不依赖原域名，直接将协议+主机名部分替换为上海交大镜像源
-        sed -i "/exit 0/i\\
-# --- 自定义 APK/OPKG 软件源删改逻辑 ---\\
-if [ -f /etc/apk/repositories ]; then\\
-    sed -i '/nss_packages/d' /etc/apk/repositories\\
-    sed -i '/sqm_scripts_nss/d' /etc/apk/repositories\\
-    sed -i '/\/video/s|https://[^/]*/|https://mirror.sjtu.edu.cn/|g' /etc/apk/repositories\\
-fi\\
-\\
-if [ -f /etc/opkg/distfeeds.conf ]; then\\
-    sed -i '/nss_packages/d' /etc/opkg/distfeeds.conf\\
-    sed -i '/sqm_scripts_nss/d' /etc/opkg/distfeeds.conf\\
-    sed -i '/\/video/s|https://[^/]*/|https://mirror.sjtu.edu.cn/|g' /etc/opkg/distfeeds.conf\\
-fi\\
-" "$target_script"
+        # 1. 如果脚本里有 exit 0，先把它删掉（防止追加的代码不执行）
+        sed -i '/exit 0/d' "$target_script"
+
+        # 2. 直接追加干净的删改逻辑（不依赖转义，绝对安全）
+        cat << 'EOF' >> "$target_script"
+
+# --- 自定义 APK/OPKG 软件源删改逻辑 ---
+fix_user_repositories() {
+    # 处理 apk 源
+    if [ -f /etc/apk/repositories ]; then
+        sed -i '/nss_packages/d' /etc/apk/repositories
+        sed -i '/sqm_scripts_nss/d' /etc/apk/repositories
+        sed -i '/\/video/s|https://[^/]*/|https://mirror.sjtu.edu.cn/|g' /etc/apk/repositories
+    fi
+
+    # 处理 opkg 源
+    if [ -f /etc/opkg/distfeeds.conf ]; then
+        sed -i '/nss_packages/d' /etc/opkg/distfeeds.conf
+        sed -i '/sqm_scripts_nss/d' /etc/opkg/distfeeds.conf
+        sed -i '/\/video/s|https://[^/]*/|https://mirror.sjtu.edu.cn/|g' /etc/opkg/distfeeds.conf
+    fi
+}
+
+# 立即执行一次
+fix_user_repositories
+
+# 防止上游逻辑异步生成文件导致没截获到，延迟 2 秒在后台再补刀执行一次
+(sleep 2 && fix_user_repositories) &
+
+exit 0
+EOF
+
+        echo "修改完成！"
     else
         echo "警告: 未找到 $target_script，跳过源修改。"
     fi
@@ -374,6 +389,7 @@ BUILD_PATH="$(realpath "$ROOT_PATH/$BUILD_DIR")"
 
 # 合并处理config
 apply_repo_modifications
+tail -n 25 "$BUILD_PATH/package/emortal/default-settings/files/99-default-settings-chinese"
 assemble_config
 print_config_fragment_summary
 remove_uhttpd_dependency
