@@ -12,6 +12,15 @@ on:
         options:
           - zn-m2_immwrt
           - zn-m2_libwrt
+      mode:
+        required: true
+        description: Build Mode
+        type: choice
+        default: debug
+        options:
+          - debug
+          - config_preview
+
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -38,7 +47,7 @@ jobs:
         run: ./core/scripts/fetch_source.sh ${{ inputs.model }}
 
       - name: Get Firmware Config
-        run: ./build.sh ${{ inputs.model }} "debug"
+        run: ./build.sh ${{ inputs.model }} "${{ inputs.mode }}"
 
       - name: Upload
         uses: actions/upload-artifact@v7.0.1
