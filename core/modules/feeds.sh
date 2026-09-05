@@ -41,6 +41,8 @@ update_feeds() {
     # 确保切换到正确的源码根目录
     cd "${BUILD_PATH:-.}" || return 1
 
+    # 彻底清理旧的 feeds 缓存文件夹，确保没有残留的旧驱动
+    rm -rf ./feeds/
     # 使用 -f -a 强制更新所有源，防止 git 冲突导致 CI 中断
     ./scripts/feeds update -f -a
 }

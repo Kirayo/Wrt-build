@@ -43,18 +43,18 @@ reset_feeds_conf() {
     cd "$BUILD_PATH"
 
     # GitHub Actions / 指定 Commit 模式
-    if [[ -n "$COMMIT_HASH" && "$COMMIT_HASH" != "none" ]]; then
+    if [[ -n "$COMMIT_HASH" && "$COMMIT_HASH" != "none" && "$COMMIT_HASH" != "null" ]]; then
         echo "使用指定 Commit: $COMMIT_HASH"
 
         git reset --hard "$COMMIT_HASH"
-        git clean -f -d
-        return
+    else
+        # 本地 / Branch 模式
+        echo "同步分支: $REPO_BRANCH"
+
+        git_retry fetch origin "$REPO_BRANCH"
+        git reset --hard "origin/$REPO_BRANCH"
     fi
 
-    # 本地 / Branch 模式
-    echo "同步分支: $REPO_BRANCH"
-
-    git_retry fetch origin "$REPO_BRANCH"
-    git reset --hard "origin/$REPO_BRANCH"
+    # 强制清理未追踪的垃圾文件
     git clean -f -d
 }
